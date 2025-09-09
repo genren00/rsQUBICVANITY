@@ -1,0 +1,17 @@
+# Rust
+target/
+Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# Qubic Helper binary
+qubic-helper-linux
+qubic-helper.exe
+qubic-helper-macos
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
