@@ -7,17 +7,16 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::fs;
 use std::env;
 
 // Native Qubic cryptography imports
-use tiny_keccak::{KangarooTwelve, Hasher};
-use base64::{Engine as _, engine::general_purpose};
+use tiny_keccak::KangarooTwelve;
+use base64::prelude::*;
 
 // Constants
 const SEED_LENGTH: usize = 55;
@@ -107,8 +106,7 @@ impl ProgressTracker {
 
 // EXACT Qubic Cryptography Module - Based on KeyUtils.cpp
 mod qubic_crypto {
-    use super::*;
-    use tiny_keccak::{KangarooTwelve, Hasher};
+    use tiny_keccak::KangarooTwelve;
 
     /// EXACT: Convert seed to bytes (a-z -> 0-25) as in KeyUtils.cpp
     fn seed_to_bytes_exact(seed: &str) -> Result<Vec<u8>, String> {
@@ -132,7 +130,7 @@ mod qubic_crypto {
         
         // EXACT: KangarooTwelve(seedBytes, 55, subseed, 32)
         let mut subseed = [0u8; super::PRIVATE_KEY_SIZE];
-        let mut k12 = KangarooTwelve::new::<()>();
+        let mut k12 = KangarooTwelve::new(b"");  // Empty customization string
         k12.update(&seed_bytes);
         k12.finalize(&mut subseed);
         
@@ -143,7 +141,7 @@ mod qubic_crypto {
     pub fn subseed_to_private_key(subseed: &[u8; super::PRIVATE_KEY_SIZE]) -> [u8; super::PRIVATE_KEY_SIZE] {
         // EXACT: KangarooTwelve(subseed, 32, privateKey, 32)
         let mut private_key = [0u8; super::PRIVATE_KEY_SIZE];
-        let mut k12 = KangarooTwelve::new::<()>();
+        let mut k12 = KangarooTwelve::new(b"");  // Empty customization string
         k12.update(subseed);
         k12.finalize(&mut private_key);
         
@@ -162,7 +160,7 @@ mod qubic_crypto {
         
         // Placeholder using K12 for demonstration (NOT the real algorithm)
         let mut public_key = [0u8; super::PUBLIC_KEY_SIZE];
-        let mut k12 = KangarooTwelve::new::<()>();
+        let mut k12 = KangarooTwelve::new(b"");  // Empty customization string
         k12.update(private_key);
         k12.finalize(&mut public_key);
         
@@ -191,7 +189,7 @@ mod qubic_crypto {
         
         // EXACT: Calculate checksum using KangarooTwelve
         let mut checksum_bytes = [0u8; 4]; // 4 bytes to hold 32-bit checksum
-        let mut k12 = KangarooTwelve::new::<()>();
+        let mut k12 = KangarooTwelve::new(b"");  // Empty customization string
         k12.update(public_key);
         k12.finalize(&mut checksum_bytes[0..3]); // Only 3 bytes as in original
         
@@ -243,7 +241,7 @@ impl SeedGenerator {
         
         let mut seed_bytes = [0u8; 32];
         seed_bytes.copy_from_slice(&entropy[..32.min(entropy.len())]);
-        let mut rng = StdRng::from_seed(seed_bytes);
+        let rng = StdRng::from_seed(seed_bytes);
         
         rng.sample_iter(&Alphanumeric)
             .take(SEED_LENGTH)
@@ -310,8 +308,8 @@ fn execute_qubic_command_native(command: &str) -> Result<QubicResponse, String> 
                         Ok((public_id, private_key, public_key)) => {
                             Ok(QubicResponse {
                                 public_id: Some(public_id),
-                                public_key_b64: Some(base64::encode(public_key)),
-                                private_key_b64: Some(base64::encode(private_key)),
+                                public_key_b64: Some(BASE64_STANDARD.encode(public_key)),
+                                private_key_b64: Some(BASE64_STANDARD.encode(private_key)),
                                 status: "ok".to_string(),
                                 error: None,
                             })
@@ -455,15 +453,15 @@ fn generate_vanity_address_single_thread(pattern: &str, max_attempts: Option<u64
         match execute_qubic_command_native(&format!("native createPublicId {}", seed)) {
             Ok(response) => {
                 if response.status == "ok" {
-                    if let Some(public_id) = response.public_id {
+                    if let Some(ref public_id) = response.public_id {
                         // Check if the address matches the pattern
-                        if matches_pattern(&public_id, pattern) {
+                        if matches_pattern(public_id, pattern) {
                             return VanityResult {
                                 status: "success".to_string(),
                                 seed: Some(seed),
-                                public_id: Some(public_id),
-                                public_key_b64: response.public_key_b64,
-                                private_key_b64: response.private_key_b64,
+                                public_id: Some(public_id.clone()),
+                                public_key_b64: response.public_key_b64.clone(),
+                                private_key_b64: response.private_key_b64.clone(),
                                 attempts: attempts + 1,
                                 error: None,
                             };
@@ -542,18 +540,18 @@ fn generate_vanity_address_multithreaded(pattern: &str, max_attempts: Option<u64
                 match execute_qubic_command_native(&format!("native createPublicId {}", seed)) {
                     Ok(response) => {
                         if response.status == "ok" {
-                            if let Some(public_id) = response.public_id {
+                            if let Some(ref public_id) = response.public_id {
                                 // Check if the address matches the pattern
-                                if matches_pattern(&public_id, &pattern) {
+                                if matches_pattern(public_id, &pattern) {
                                     let mut found_guard = found.lock().unwrap();
                                     if !*found_guard {
                                         *found_guard = true;
                                         *result.lock().unwrap() = Some(VanityResult {
                                             status: "success".to_string(),
                                             seed: Some(seed),
-                                            public_id: Some(public_id),
-                                            public_key_b64: response.public_key_b64,
-                                            private_key_b64: response.private_key_b64,
+                                            public_id: Some(public_id.clone()),
+                                            public_key_b64: response.public_key_b64.clone(),
+                                            private_key_b64: response.private_key_b64.clone(),
                                             attempts: attempts * num_threads as u64 + thread_id as u64,
                                             error: None,
                                         });
@@ -743,7 +741,7 @@ fn interactive_mode() {
         println!("\n{}", "=".repeat(70));
         println!("Choose an option:");
         println!("1. Generate vanity address");
-        println!("2. Run validation tests");
+        println!("2. Run tests");
         println!("3. Exit");
         print!("Enter choice (1-3): ");
         io::stdout().flush().unwrap();
@@ -792,11 +790,16 @@ fn interactive_mode() {
                     let elapsed = start_time.elapsed().as_secs_f64();
                     
                     if result.status == "success" {
+                        let seed = result.seed.as_ref().unwrap();
+                        let public_id = result.public_id.as_ref().unwrap();
+                        let public_key_b64 = result.public_key_b64.as_ref().unwrap();
+                        let private_key_b64 = result.private_key_b64.as_ref().unwrap();
+                        
                         println!("\n🎉 Success! Found vanity address:");
-                        println!("Public ID: {}", result.public_id.unwrap());
-                        println!("Seed: {}", result.seed.unwrap());
-                        println!("Public Key: {}", result.public_key_b64.unwrap());
-                        println!("Private Key: {}", result.private_key_b64.unwrap());
+                        println!("Public ID: {}", public_id);
+                        println!("Seed: {}", seed);
+                        println!("Public Key: {}", public_key_b64);
+                        println!("Private Key: {}", private_key_b64);
                         println!("Attempts: {}", result.attempts);
                         println!("Time: {:.2} seconds", elapsed);
                         
@@ -807,18 +810,16 @@ fn interactive_mode() {
                         }
                         
                         // Verify with EXACT implementation
-                        if let Some(ref seed) = result.seed {
-                            match qubic_crypto::seed_to_identity(seed) {
-                                Ok((regenerated_id, _, _)) => {
-                                    if regenerated_id == result.public_id.unwrap() {
-                                        println!("✅ Algorithm verification: PASSED");
-                                    } else {
-                                        println!("❌ Algorithm verification: FAILED - MISMATCH!");
-                                    }
-                                },
-                                Err(e) => {
-                                    println!("❌ Algorithm verification: ERROR - {}", e);
+                        match qubic_crypto::seed_to_identity(seed) {
+                            Ok((regenerated_id, _, _)) => {
+                                if regenerated_id == *public_id {
+                                    println!("✅ Algorithm verification: PASSED");
+                                } else {
+                                    println!("❌ Algorithm verification: FAILED - MISMATCH!");
                                 }
+                            },
+                            Err(e) => {
+                                println!("❌ Algorithm verification: ERROR - {}", e);
                             }
                         }
                     } else {
@@ -937,11 +938,16 @@ fn main() {
             let elapsed = start_time.elapsed().as_secs_f64();
             
             if result.status == "success" {
+                let seed = result.seed.as_ref().unwrap();
+                let public_id = result.public_id.as_ref().unwrap();
+                let public_key_b64 = result.public_key_b64.as_ref().unwrap();
+                let private_key_b64 = result.private_key_b64.as_ref().unwrap();
+                
                 println!("\n🎉 Success! Found vanity address:");
-                println!("Public ID: {}", result.public_id.unwrap());
-                println!("Seed: {}", result.seed.unwrap());
-                println!("Public Key: {}", result.public_key_b64.unwrap());
-                println!("Private Key: {}", result.private_key_b64.unwrap());
+                println!("Public ID: {}", public_id);
+                println!("Seed: {}", seed);
+                println!("Public Key: {}", public_key_b64);
+                println!("Private Key: {}", private_key_b64);
                 println!("Attempts: {}", result.attempts);
                 println!("Time: {:.2} seconds", elapsed);
                 
@@ -952,18 +958,16 @@ fn main() {
                 }
                 
                 // Verify with EXACT implementation
-                if let Some(ref seed) = result.seed {
-                    match qubic_crypto::seed_to_identity(seed) {
-                        Ok((regenerated_id, _, _)) => {
-                            if regenerated_id == result.public_id.unwrap() {
-                                println!("✅ Algorithm verification: PASSED - 100% compatibility");
-                            } else {
-                                println!("❌ Algorithm verification: FAILED - MISMATCH!");
-                            }
-                        },
-                        Err(e) => {
-                            println!("❌ Algorithm verification: ERROR - {}", e);
+                match qubic_crypto::seed_to_identity(seed) {
+                    Ok((regenerated_id, _, _)) => {
+                        if regenerated_id == *public_id {
+                            println!("✅ Algorithm verification: PASSED - 100% compatibility");
+                        } else {
+                            println!("❌ Algorithm verification: FAILED - MISMATCH!");
                         }
+                    },
+                    Err(e) => {
+                        println!("❌ Algorithm verification: ERROR - {}", e);
                     }
                 }
             } else {
