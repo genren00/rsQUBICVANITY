@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;  // Removed unused `json` import
 use reqwest;
 use std::fs;
 use std::env;
@@ -26,8 +26,11 @@ const QUBIC_HELPER_DOWNLOAD_URL: &str = "https://github.com/Qubic-Hub/qubic-help
 // Struct for Qubic Helper response
 #[derive(Debug, Deserialize)]
 struct QubicResponse {
+    #[serde(rename = "publicId")]
     public_id: Option<String>,
+    #[serde(rename = "publicKeyB64")]
     public_key_b64: Option<String>,
+    #[serde(rename = "privateKeyB64")]
     private_key_b64: Option<String>,
     status: String,
     error: Option<String>,
@@ -38,8 +41,11 @@ struct QubicResponse {
 struct VanityResult {
     status: String,
     seed: Option<String>,
+    #[serde(rename = "publicId")]
     public_id: Option<String>,
+    #[serde(rename = "publicKeyB64")]
     public_key_b64: Option<String>,
+    #[serde(rename = "privateKeyB64")]
     private_key_b64: Option<String>,
     attempts: u64,
     error: Option<String>,
@@ -105,6 +111,7 @@ impl SeedGenerator {
         thread_rng()
             .sample_iter(&Alphanumeric)
             .take(SEED_LENGTH)
+            .map(|c| c as char)  // Convert u8 to char
             .map(|c| c.to_ascii_lowercase())
             .collect()
     }
@@ -119,6 +126,7 @@ impl SeedGenerator {
         
         rng.sample_iter(&Alphanumeric)
             .take(SEED_LENGTH)
+            .map(|c| c as char)  // Convert u8 to char
             .map(|c| c.to_ascii_lowercase())
             .collect()
     }
@@ -538,19 +546,23 @@ fn test_full_vanity_generation() {
     let result = generate_vanity_address(pattern, Some(10000), None);
 
     if result.status == "success" {
+        // Clone values to avoid move issues
+        let seed = result.seed.as_ref().unwrap().clone();
+        let public_id = result.public_id.as_ref().unwrap().clone();
+        
         // Verify the result
-        assert!(AddressValidator::validate_seed(&result.seed.unwrap()).is_ok());
-        assert!(AddressValidator::validate_public_id(&result.public_id.unwrap()).is_ok());
-        assert!(matches_pattern(&result.public_id.unwrap(), pattern));
+        assert!(AddressValidator::validate_seed(&seed).is_ok());
+        assert!(AddressValidator::validate_public_id(&public_id).is_ok());
+        assert!(matches_pattern(&public_id, pattern));
 
         // Verify consistency
         assert!(AddressValidator::verify_seed_address_consistency(
-            &result.seed.unwrap(),
-            &result.public_id.unwrap()
+            &seed,
+            &public_id
         ));
 
         println!("Test passed: Found {} in {} attempts", 
-                 result.public_id.unwrap(), result.attempts);
+                 public_id, result.attempts);
     } else {
         println!("Test failed: {:?}", result.error);
     }
@@ -594,10 +606,10 @@ Note: Longer patterns take exponentially longer to find!
 // Interactive mode
 fn interactive_mode() {
     println!("Qubic Vanity Address Generator - Interactive Mode");
-    println!("=" * 50);
+    println!("{}", "=".repeat(50));  // Fixed string multiplication
 
     loop {
-        println!("\n{}", "=".repeat(50));
+        println!("\n{}", "=".repeat(50));  // Fixed string multiplication
         println!("Choose an option:");
         println!("1. Generate vanity address");
         println!("2. Run tests");
@@ -674,7 +686,7 @@ fn interactive_mode() {
 // Main function
 fn main() {
     println!("Qubic Vanity Address Generator");
-    println!("{}", "=".repeat(40));
+    println!("{}", "=".repeat(40));  // Fixed string multiplication
 
     // Check if Qubic Helper binary exists
     if !Path::new(QUBIC_HELPER_PATH).exists() {
