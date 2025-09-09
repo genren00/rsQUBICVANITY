@@ -1,7 +1,18 @@
 [package]
-name = "qubic-vanity-generator"
+name = "rsqubic_vanity"
 version = "0.1.0"
 edition = "2021"
+description = "High-performance Qubic vanity address generator in Rust"
+license = "MIT"
+repository = "https://github.com/genren00/rsQUBICVANITY"
+homepage = "https://github.com/genren00/rsQUBICVANITY"
+readme = "README.md"
+keywords = ["qubic", "vanity", "address", "generator", "cryptocurrency"]
+categories = ["command-line-utilities", "cryptography"]
+
+[[bin]]
+name = "rsqubic_vanity"
+path = "src/main.rs"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -9,3 +20,9 @@ serde_json = "1.0"
 rand = "0.8"
 reqwest = { version = "0.11", features = ["blocking"] }
 num_cpus = "1.13"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
