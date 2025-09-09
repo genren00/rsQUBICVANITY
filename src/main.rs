@@ -16,7 +16,7 @@ use std::env;
 
 // Native Qubic cryptography imports
 use tiny_keccak::{KangarooTwelve, Hasher};
-use fourq::{Scalar, Point};  // Import FourQ types
+use fourq::{scalar, point};  // Import FourQ types
 use base64::prelude::*;
 
 // Constants
