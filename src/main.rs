@@ -16,7 +16,8 @@ use std::env;
 
 // Native Qubic cryptography imports
 use tiny_keccak::{KangarooTwelve, Hasher};
-use fourq::{scalar, point};  // Import FourQ types
+use fourq::scalar::Scalar;
+use fourq::point::Point;
 use base64::prelude::*;
 
 // Constants
@@ -108,7 +109,8 @@ impl ProgressTracker {
 // EXACT Qubic Cryptography Module - Based on KeyUtils.cpp
 mod qubic_crypto {
     use tiny_keccak::{KangarooTwelve, Hasher};
-    use fourq::{Scalar, Point};  // Import FourQ types
+    use fourq::scalar::Scalar;
+    use fourq::point::Point;
 
     /// EXACT: Convert seed to bytes (a-z -> 0-25) as in KeyUtils.cpp
     fn seed_to_bytes_exact(seed: &str) -> Result<Vec<u8>, String> {
