@@ -106,7 +106,7 @@ impl ProgressTracker {
 
 // EXACT Qubic Cryptography Module - Based on KeyUtils.cpp
 mod qubic_crypto {
-    use tiny_keccak::KangarooTwelve;
+    use tiny_keccak::{KangarooTwelve, Hasher};
 
     /// EXACT: Convert seed to bytes (a-z -> 0-25) as in KeyUtils.cpp
     fn seed_to_bytes_exact(seed: &str) -> Result<Vec<u8>, String> {
