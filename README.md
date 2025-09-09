@@ -1,0 +1,2 @@
+# rsQUBICVANITY
+Rust qubic vanity
