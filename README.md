@@ -1,6 +1,9 @@
 # rsQUBICVANITY
-Rust qubic vanity ¥¥¥¥ VIBE CODED! SLOW! 6H/s OMEGALUL
+Rust qubic vanity ¥¥¥¥ VIBE CODED! SLOW! 
+## 6H/s OMEGALUL
+--
 
+[let me watch forsen t3 streams](https://cwallet.com/t/MIXHFP7D)
 
 # rsQUBICVANITY
 
