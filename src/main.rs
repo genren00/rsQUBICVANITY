@@ -1,5 +1,6 @@
-// main.rs - High-Performance Qubic Vanity Address Generator
-// Optimized for batch processing and parallel helper instances
+// main.rs
+// Qubic Vanity Address Generator in Rust
+// A high-performance implementation for generating custom Qubic addresses
 
 use std::process::Command;
 use std::io::{self, Write};
@@ -10,23 +11,20 @@ use std::time::{Duration, Instant};
 use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::Value;  // Removed unused `json` import
 use reqwest;
 use std::fs;
 use std::env;
-use std::collections::VecDeque;
 
 // Constants
 const SEED_LENGTH: usize = 55;
 const PUBLIC_ID_LENGTH: usize = 60;
 const QUBIC_HELPER_PATH: &str = "./qubic-helper-linux";
+const QUBIC_HELPER_VERSION: &str = "3.0.5";
 const QUBIC_HELPER_DOWNLOAD_URL: &str = "https://github.com/Qubic-Hub/qubic-helper-utils/releases/download/3.0.5/qubic-helper-linux-x64-3_0_5";
-const DEFAULT_HELPERS: usize = 8;
-const DEFAULT_BATCH_SIZE: usize = 50;
-const MAX_QUEUE_SIZE: usize = 1000;
 
 // Struct for Qubic Helper response
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize)]
 struct QubicResponse {
     #[serde(rename = "publicId")]
     public_id: Option<String>,
@@ -35,13 +33,7 @@ struct QubicResponse {
     #[serde(rename = "privateKeyB64")]
     private_key_b64: Option<String>,
     status: String,
-    error: Option<String>, // Used for error handling in worker threads
-}
-
-// Struct for batch response
-#[derive(Debug, Deserialize)]
-struct BatchResponse {
-    results: Vec<QubicResponse>,
+    error: Option<String>,
 }
 
 // Struct for vanity generation result
@@ -57,7 +49,6 @@ struct VanityResult {
     private_key_b64: Option<String>,
     attempts: u64,
     error: Option<String>,
-    hashes_per_second: f64,
 }
 
 // Struct for progress tracking
@@ -66,7 +57,6 @@ struct ProgressTracker {
     start_time: Instant,
     attempts: u64,
     last_update_time: Instant,
-    last_hashes: u64,
 }
 
 impl ProgressTracker {
@@ -75,57 +65,45 @@ impl ProgressTracker {
             start_time: Instant::now(),
             attempts: 0,
             last_update_time: Instant::now(),
-            last_hashes: 0,
         }
     }
 
-    fn update(&mut self, attempts: u64) -> u64 {
+    fn update(&mut self, attempts: u64) {
         self.attempts = attempts;
         let current_time = Instant::now();
         
-        // Print progress every 5 seconds
-        if current_time.duration_since(self.last_update_time).as_secs() >= 5 {
+        // Print progress every 10 seconds
+        if current_time.duration_since(self.last_update_time).as_secs() >= 10 {
             self.print_progress();
             self.last_update_time = current_time;
-            self.last_hashes = attempts;
         }
-        
-        attempts
     }
 
     fn print_progress(&self) {
         let elapsed = self.start_time.elapsed().as_secs_f64();
-        let hashes_per_second = if elapsed > 0.0 {
+        let attempts_per_second = if elapsed > 0.0 {
             self.attempts as f64 / elapsed
         } else {
             0.0
         };
         
-        let recent_hashes = self.attempts - self.last_hashes;
-        let recent_elapsed = self.last_update_time.elapsed().as_secs_f64();
-        let recent_rate = if recent_elapsed > 0.0 {
-            recent_hashes as f64 / recent_elapsed
-        } else {
-            0.0
-        };
-        
-        println!("Progress: {} attempts | {:.1} total/s | {:.1} recent/s | {:.1}s elapsed", 
-                 self.attempts, hashes_per_second, recent_rate, elapsed);
+        println!("Progress: {} attempts in {:.1}s ({:.1} attempts/second)", 
+                 self.attempts, elapsed, attempts_per_second);
     }
 
     fn get_stats(&self) -> (u64, f64, f64) {
         let elapsed = self.start_time.elapsed().as_secs_f64();
-        let hashes_per_second = if elapsed > 0.0 {
+        let attempts_per_second = if elapsed > 0.0 {
             self.attempts as f64 / elapsed
         } else {
             0.0
         };
         
-        (self.attempts, elapsed, hashes_per_second)
+        (self.attempts, elapsed, attempts_per_second)
     }
 }
 
-// High-performance Seed Generator
+// Seed Generator
 struct SeedGenerator;
 
 impl SeedGenerator {
@@ -133,13 +111,24 @@ impl SeedGenerator {
         thread_rng()
             .sample_iter(&Alphanumeric)
             .take(SEED_LENGTH)
-            .map(|c| c as char)
+            .map(|c| c as char)  // Convert u8 to char
             .map(|c| c.to_ascii_lowercase())
             .collect()
     }
 
-    fn generate_batch(size: usize) -> Vec<String> {
-        (0..size).map(|_| Self::generate()).collect()
+    fn generate_from_entropy(entropy: &[u8]) -> String {
+        use rand::SeedableRng;
+        use rand::rngs::StdRng;
+        
+        let mut seed_bytes = [0u8; 32];
+        seed_bytes.copy_from_slice(&entropy[..32.min(entropy.len())]);
+        let mut rng = StdRng::from_seed(seed_bytes);
+        
+        rng.sample_iter(&Alphanumeric)
+            .take(SEED_LENGTH)
+            .map(|c| c as char)  // Convert u8 to char
+            .map(|c| c.to_ascii_lowercase())
+            .collect()
     }
 }
 
@@ -170,64 +159,69 @@ impl AddressValidator {
         
         Ok(())
     }
+
+    fn verify_seed_address_consistency(seed: &str, expected_public_id: &str) -> bool {
+        match execute_qubic_command(&format!("{} createPublicId {}", QUBIC_HELPER_PATH, seed)) {
+            Ok(response) => {
+                if let Some(public_id) = response.public_id {
+                    public_id == expected_public_id
+                } else {
+                    false
+                }
+            },
+            Err(_) => false,
+        }
+    }
 }
 
-// Execute Qubic Helper batch command
-fn execute_qubic_batch_command(seeds: &[String], helper_path: &str) -> Result<Vec<QubicResponse>, String> {
-    if seeds.is_empty() {
-        return Ok(Vec::new());
+// Execute Qubic Helper command
+fn execute_qubic_command(command: &str) -> Result<QubicResponse, String> {
+    // Check if the helper binary exists
+    if !Path::new(QUBIC_HELPER_PATH).exists() {
+        return Err(format!("Qubic Helper binary not found at {}", QUBIC_HELPER_PATH));
     }
 
-    // Create temporary file
-    let temp_file = format!("/tmp/qubic_batch_{}_{}.txt", std::process::id(), thread_rng().gen::<u32>());
-    
-    // Write seeds to temp file
-    {
-        let mut file = fs::File::create(&temp_file)
-            .map_err(|e| format!("Failed to create temp file: {}", e))?;
-        
-        for seed in seeds {
-            writeln!(file, "{}", seed)
-                .map_err(|e| format!("Failed to write seed: {}", e))?;
-        }
+    // Parse command
+    let parts: Vec<&str> = command.split_whitespace().collect();
+    if parts.len() < 2 {
+        return Err("Invalid command format".to_string());
     }
 
-    // Execute batch command
-    let output = Command::new(helper_path)
-        .args(&["batchCreatePublicIds", &temp_file])
-        .output()
-        .map_err(|e| format!("Failed to execute batch command: {}", e))?;
+    // Execute the command
+    let output = Command::new(parts[0])
+        .args(&parts[1..])
+        .output();
 
-    // Clean up temp file
-    let _ = fs::remove_file(&temp_file);
+    match output {
+        Ok(output) => {
+            if !output.status.success() {
+                return Err(format!("Command failed with exit code: {}", output.status));
+            }
 
-    if !output.status.success() {
-        return Err(format!("Batch command failed: {:?}", String::from_utf8_lossy(&output.stderr)));
-    }
+            // Parse the JSON response
+            let response_str = String::from_utf8_lossy(&output.stdout);
+            let response: Value = match serde_json::from_str(&response_str) {
+                Ok(v) => v,
+                Err(e) => return Err(format!("Invalid JSON response: {}", e)),
+            };
 
-    // Parse response
-    let response_str = String::from_utf8_lossy(&output.stdout);
-    
-    // Try to parse as batch response first
-    if let Ok(batch_response) = serde_json::from_str::<BatchResponse>(&response_str) {
-        return Ok(batch_response.results);
+            // Extract fields
+            let status = response["status"].as_str().unwrap_or("error").to_string();
+            let public_id = response["publicId"].as_str().map(|s| s.to_string());
+            let public_key_b64 = response["publicKeyB64"].as_str().map(|s| s.to_string());
+            let private_key_b64 = response["privateKeyB64"].as_str().map(|s| s.to_string());
+            let error = response["error"].as_str().map(|s| s.to_string());
+
+            Ok(QubicResponse {
+                public_id,
+                public_key_b64,
+                private_key_b64,
+                status,
+                error,
+            })
+        },
+        Err(e) => Err(format!("Failed to execute command: {}", e)),
     }
-    
-    // Fallback: parse as individual responses
-    let lines: Vec<&str> = response_str.lines().collect();
-    let mut results = Vec::new();
-    
-    for line in lines {
-        if let Ok(response) = serde_json::from_str::<QubicResponse>(line) {
-            results.push(response);
-        }
-    }
-    
-    if results.is_empty() {
-        return Err(format!("Failed to parse batch response: {}", response_str));
-    }
-    
-    Ok(results)
 }
 
 // Validate vanity pattern
@@ -236,21 +230,25 @@ fn validate_vanity_pattern(pattern: &str) -> bool {
         return false;
     }
 
+    // Check for wildcard pattern
     if pattern.ends_with('*') {
         let prefix = &pattern[..pattern.len() - 1];
         return prefix.chars().all(|c| c.is_ascii_uppercase());
     }
 
+    // Check for exact prefix pattern
     pattern.chars().all(|c| c.is_ascii_uppercase())
 }
 
 // Check if public ID matches pattern
 fn matches_pattern(public_id: &str, pattern: &str) -> bool {
+    // Simple prefix matching
     if pattern.ends_with('*') {
         let prefix = &pattern[..pattern.len() - 1];
         return public_id.starts_with(prefix);
     }
 
+    // Exact match
     public_id.starts_with(pattern)
 }
 
@@ -258,6 +256,7 @@ fn matches_pattern(public_id: &str, pattern: &str) -> bool {
 fn download_qubic_helper() -> Result<(), String> {
     println!("Downloading Qubic Helper Utilities from {}...", QUBIC_HELPER_DOWNLOAD_URL);
 
+    // Create HTTP client
     let client = match reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(300))
         .build() {
@@ -265,6 +264,7 @@ fn download_qubic_helper() -> Result<(), String> {
         Err(e) => return Err(format!("Failed to create HTTP client: {}", e)),
     };
 
+    // Download the file
     let response = match client.get(QUBIC_HELPER_DOWNLOAD_URL).send() {
         Ok(response) => response,
         Err(e) => return Err(format!("Download failed: {}", e)),
@@ -274,6 +274,7 @@ fn download_qubic_helper() -> Result<(), String> {
         return Err(format!("Download failed with status: {}", response.status()));
     }
 
+    // Write to file
     let mut file = match fs::File::create(QUBIC_HELPER_PATH) {
         Ok(file) => file,
         Err(e) => return Err(format!("Failed to create file: {}", e)),
@@ -288,6 +289,7 @@ fn download_qubic_helper() -> Result<(), String> {
         return Err(format!("Failed to write file: {}", e));
     }
 
+    // Make it executable
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -300,89 +302,8 @@ fn download_qubic_helper() -> Result<(), String> {
     Ok(())
 }
 
-// Create multiple helper instances
-fn create_helper_instances(num_helpers: usize) -> Result<Vec<String>, String> {
-    let mut helper_paths = Vec::new();
-    
-    for i in 0..num_helpers {
-        let helper_path = format!("./qubic-helper-{}", i);
-        
-        if !Path::new(&helper_path).exists() {
-            fs::copy(QUBIC_HELPER_PATH, &helper_path)
-                .map_err(|e| format!("Failed to copy helper binary {}: {}", i, e))?;
-            
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&helper_path, fs::Permissions::from_mode(0o755))
-                    .map_err(|e| format!("Failed to set permissions for {}: {}", i, e))?;
-            }
-        }
-        
-        helper_paths.push(helper_path);
-    }
-    
-    Ok(helper_paths)
-}
-
-// Worker thread for high-performance generation
-fn worker_thread(
-    helper_path: String,
-    seed_queue: Arc<Mutex<VecDeque<String>>>,
-    result_queue: Arc<Mutex<Vec<(String, QubicResponse)>>>,
-    shutdown_flag: Arc<Mutex<bool>>,
-) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
-        loop {
-            // Check shutdown flag
-            if *shutdown_flag.lock().unwrap() {
-                break;
-            }
-
-            // Get batch of seeds
-            let batch = {
-                let mut queue = seed_queue.lock().unwrap();
-                let mut batch = Vec::new();
-                
-                while batch.len() < DEFAULT_BATCH_SIZE && !queue.is_empty() {
-                    if let Some(seed) = queue.pop_front() {
-                        batch.push(seed);
-                    }
-                }
-                
-                batch
-            };
-
-            if batch.is_empty() {
-                thread::sleep(Duration::from_millis(10));
-                continue;
-            }
-
-            // Process batch
-            match execute_qubic_batch_command(&batch, &helper_path) {
-                Ok(responses) => {
-                    let mut results = Vec::new();
-                    for (i, response) in responses.into_iter().enumerate() {
-                        results.push((batch[i].clone(), response));
-                    }
-                    
-                    let mut result_queue = result_queue.lock().unwrap();
-                    result_queue.extend(results);
-                },
-                Err(e) => {
-                    eprintln!("Worker {} error: {}", helper_path, e);
-                }
-            }
-        }
-    })
-}
-
-// Ultra-high-performance vanity address generator
-fn generate_vanity_address_ultra_fast(
-    pattern: &str, 
-    max_attempts: Option<u64>, 
-    num_helpers: usize
-) -> VanityResult {
+// Generate vanity address (single-threaded)
+fn generate_vanity_address_single_thread(pattern: &str, max_attempts: Option<u64>) -> VanityResult {
     if !validate_vanity_pattern(pattern) {
         return VanityResult {
             status: "error".to_string(),
@@ -392,147 +313,190 @@ fn generate_vanity_address_ultra_fast(
             private_key_b64: None,
             attempts: 0,
             error: Some("Invalid vanity pattern".to_string()),
-            hashes_per_second: 0.0,
         };
     }
 
-    println!("Starting ultra-fast vanity generation for pattern: {}", pattern);
-    println!("Using {} helper instances with batch size {}", num_helpers, DEFAULT_BATCH_SIZE);
-
-    let _start_time = Instant::now(); // Fixed: prefixed with underscore
     let mut progress_tracker = ProgressTracker::new();
     let mut attempts = 0;
 
-    // Create helper instances
-    let helper_paths = match create_helper_instances(num_helpers) {
-        Ok(paths) => paths,
-        Err(e) => {
-            return VanityResult {
-                status: "error".to_string(),
-                seed: None,
-                public_id: None,
-                public_key_b64: None,
-                private_key_b64: None,
-                attempts: 0,
-                error: Some(format!("Failed to create helper instances: {}", e)),
-                hashes_per_second: 0.0,
-            };
-        }
-    };
-
-    // Create shared queues
-    let seed_queue = Arc::new(Mutex::new(VecDeque::new()));
-    let result_queue = Arc::new(Mutex::new(Vec::new()));
-    let shutdown_flag = Arc::new(Mutex::new(false));
-
-    // Pre-generate initial seed batch
-    {
-        let mut queue = seed_queue.lock().unwrap();
-        for _ in 0..(num_helpers * DEFAULT_BATCH_SIZE * 10) {
-            queue.push_back(SeedGenerator::generate());
-        }
-    }
-
-    // Start worker threads
-    let mut handles = Vec::new();
-    for helper_path in helper_paths {
-        let handle = worker_thread(
-            helper_path,
-            Arc::clone(&seed_queue),
-            Arc::clone(&result_queue),
-            Arc::clone(&shutdown_flag),
-        );
-        handles.push(handle);
-    }
-
-    // Seed generator thread
-    let seed_generator_handle = {
-        let seed_queue = Arc::clone(&seed_queue);
-        let shutdown_flag = Arc::clone(&shutdown_flag);
-        
-        thread::spawn(move || {
-            while !*shutdown_flag.lock().unwrap() {
-                let mut queue = seed_queue.lock().unwrap();
-                if queue.len() < MAX_QUEUE_SIZE {
-                    let batch = SeedGenerator::generate_batch(DEFAULT_BATCH_SIZE * 2);
-                    for seed in batch {
-                        queue.push_back(seed);
-                    }
-                }
-                drop(queue);
-                thread::sleep(Duration::from_millis(1));
-            }
-        })
-    };
-
-    // Main processing loop
     loop {
         // Check max attempts
         if let Some(max) = max_attempts {
             if attempts >= max {
-                break;
+                return VanityResult {
+                    status: "error".to_string(),
+                    seed: None,
+                    public_id: None,
+                    public_key_b64: None,
+                    private_key_b64: None,
+                    attempts,
+                    error: Some(format!("No match found after {} attempts", max)),
+                };
             }
         }
 
-        // Process results
-        let results = {
-            let mut queue = result_queue.lock().unwrap();
-            queue.drain(..).collect::<Vec<_>>()
-        };
+        // Generate a random seed
+        let seed = SeedGenerator::generate();
 
-        for (seed, response) in results {
-            attempts += 1;
-            
-            if response.status == "ok" {
-                if let Some(ref public_id) = response.public_id {
-                    if matches_pattern(public_id, pattern) {
-                        // Shutdown all threads
-                        *shutdown_flag.lock().unwrap() = true;
-                        
-                        let (total_attempts, _elapsed, hashes_per_second) = progress_tracker.get_stats(); // Fixed: prefixed with underscore
-                        
-                        return VanityResult {
-                            status: "success".to_string(),
-                            seed: Some(seed),
-                            public_id: Some(public_id.clone()),
-                            public_key_b64: response.public_key_b64.clone(),
-                            private_key_b64: response.private_key_b64.clone(),
-                            attempts: total_attempts,
-                            error: None,
-                            hashes_per_second,
-                        };
+        // Convert seed to public ID
+        match execute_qubic_command(&format!("{} createPublicId {}", QUBIC_HELPER_PATH, seed)) {
+            Ok(response) => {
+                if response.status == "ok" {
+                    if let Some(public_id) = response.public_id {
+                        // Check if the address matches the pattern
+                        if matches_pattern(&public_id, pattern) {
+                            return VanityResult {
+                                status: "success".to_string(),
+                                seed: Some(seed),
+                                public_id: Some(public_id),
+                                public_key_b64: response.public_key_b64,
+                                private_key_b64: response.private_key_b64,
+                                attempts: attempts + 1,
+                                error: None,
+                            };
+                        }
                     }
                 }
+            },
+            Err(e) => {
+                eprintln!("Error executing command: {}", e);
             }
         }
 
         // Update progress
+        attempts += 1;
         progress_tracker.update(attempts);
 
-        // Small delay to prevent busy waiting
-        thread::sleep(Duration::from_millis(10));
+        // Print progress periodically
+        if attempts % 1000 == 0 {
+            println!("Attempt {}: No match yet...", attempts);
+        }
+    }
+}
+
+// Generate vanity address (multi-threaded)
+fn generate_vanity_address_multithreaded(pattern: &str, max_attempts: Option<u64>, num_threads: usize) -> VanityResult {
+    if !validate_vanity_pattern(pattern) {
+        return VanityResult {
+            status: "error".to_string(),
+            seed: None,
+            public_id: None,
+            public_key_b64: None,
+            private_key_b64: None,
+            attempts: 0,
+            error: Some("Invalid vanity pattern".to_string()),
+        };
     }
 
-    // Shutdown all threads
-    *shutdown_flag.lock().unwrap() = true;
+    println!("Starting vanity generation for pattern: {}", pattern);
+    println!("Using {} threads for generation", num_threads);
 
-    // Wait for all threads to finish
+    // Shared state between threads
+    let found = Arc::new(Mutex::new(false));
+    let result = Arc::new(Mutex::new(None));
+    let progress_tracker = Arc::new(Mutex::new(ProgressTracker::new()));
+
+    // Spawn worker threads
+    let mut handles = vec![];
+
+    for thread_id in 0..num_threads {
+        let pattern = pattern.to_string();
+        let found = Arc::clone(&found);
+        let result = Arc::clone(&result);
+        let progress_tracker = Arc::clone(&progress_tracker);
+
+        let handle = thread::spawn(move || {
+            let mut attempts = 0;
+            let local_max_attempts = max_attempts.map(|m| m / num_threads as u64);
+
+            loop {
+                // Check if another thread found a match
+                if *found.lock().unwrap() {
+                    break;
+                }
+
+                // Check max attempts
+                if let Some(max) = local_max_attempts {
+                    if attempts >= max {
+                        break;
+                    }
+                }
+
+                // Generate a random seed
+                let seed = SeedGenerator::generate();
+
+                // Convert seed to public ID
+                match execute_qubic_command(&format!("{} createPublicId {}", QUBIC_HELPER_PATH, seed)) {
+                    Ok(response) => {
+                        if response.status == "ok" {
+                            if let Some(public_id) = response.public_id {
+                                // Check if the address matches the pattern
+                                if matches_pattern(&public_id, &pattern) {
+                                    let mut found_guard = found.lock().unwrap();
+                                    if !*found_guard {
+                                        *found_guard = true;
+                                        *result.lock().unwrap() = Some(VanityResult {
+                                            status: "success".to_string(),
+                                            seed: Some(seed),
+                                            public_id: Some(public_id),
+                                            public_key_b64: response.public_key_b64,
+                                            private_key_b64: response.private_key_b64,
+                                            attempts: attempts * num_threads as u64 + thread_id as u64,
+                                            error: None,
+                                        });
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("Error executing command: {}", e);
+                    }
+                }
+
+                // Update progress
+                attempts += 1;
+                let total_attempts = attempts * num_threads as u64 + thread_id as u64;
+                if let Ok(mut tracker) = progress_tracker.lock() {
+                    tracker.update(total_attempts);
+                }
+            }
+        });
+
+        handles.push(handle);
+    }
+
+    // Wait for all threads to complete
     for handle in handles {
         let _ = handle.join();
     }
-    let _ = seed_generator_handle.join();
 
-    let (total_attempts, _elapsed, hashes_per_second) = progress_tracker.get_stats(); // Fixed: prefixed with underscore
+    // Get the result
+    let result_guard = result.lock().unwrap();
+    if let Some(ref result) = *result_guard {
+        result.clone()
+    } else {
+        VanityResult {
+            status: "error".to_string(),
+            seed: None,
+            public_id: None,
+            public_key_b64: None,
+            private_key_b64: None,
+            attempts: max_attempts.unwrap_or(0),
+            error: Some("No match found".to_string()),
+        }
+    }
+}
 
-    VanityResult {
-        status: "error".to_string(),
-        seed: None,
-        public_id: None,
-        public_key_b64: None,
-        private_key_b64: None,
-        attempts: total_attempts,
-        error: Some("No match found".to_string()),
-        hashes_per_second,
+// Generate vanity address (main function)
+fn generate_vanity_address(pattern: &str, max_attempts: Option<u64>, num_threads: Option<usize>) -> VanityResult {
+    let num_threads = num_threads.unwrap_or_else(|| num_cpus::get());
+    
+    if num_threads > 1 {
+        generate_vanity_address_multithreaded(pattern, max_attempts, num_threads)
+    } else {
+        generate_vanity_address_single_thread(pattern, max_attempts)
     }
 }
 
@@ -540,18 +504,26 @@ fn generate_vanity_address_ultra_fast(
 fn run_validation_tests() {
     println!("Running validation tests...");
 
+    // Test seed validation
     let valid_seed = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let invalid_seed = "InvalidSeed123";
 
     assert!(AddressValidator::validate_seed(valid_seed).is_ok());
     assert!(AddressValidator::validate_seed(invalid_seed).is_err());
 
+    // Test public ID validation
     let valid_id = "BZBQFLLBNCXEMGLOBHUVFTLUPLVCPQUASSILFABOFFBCADQSSUPNWLZBQEXK";
     let invalid_id = "InvalidID123";
 
     assert!(AddressValidator::validate_public_id(valid_id).is_ok());
     assert!(AddressValidator::validate_public_id(invalid_id).is_err());
 
+    // Test seed-address consistency (requires qubic-helper binary)
+    if Path::new(QUBIC_HELPER_PATH).exists() {
+        assert!(AddressValidator::verify_seed_address_consistency(valid_seed, valid_id));
+    }
+
+    // Test pattern matching
     assert!(matches_pattern(valid_id, "BZBQ*"));
     assert!(matches_pattern(valid_id, "BZBQFLL"));
     assert!(!matches_pattern(valid_id, "INVALID"));
@@ -559,19 +531,90 @@ fn run_validation_tests() {
     println!("All validation tests passed!");
 }
 
+// Test full vanity generation
+fn test_full_vanity_generation() {
+    println!("Testing full vanity generation process...");
+
+    // Use a simple pattern that should be found quickly
+    let pattern = "A*";
+
+    if !Path::new(QUBIC_HELPER_PATH).exists() {
+        println!("Qubic Helper binary not found. Skipping full generation test.");
+        return;
+    }
+
+    let result = generate_vanity_address(pattern, Some(10000), None);
+
+    if result.status == "success" {
+        // Clone values to avoid move issues
+        let seed = result.seed.as_ref().unwrap().clone();
+        let public_id = result.public_id.as_ref().unwrap().clone();
+        
+        // Verify the result
+        assert!(AddressValidator::validate_seed(&seed).is_ok());
+        assert!(AddressValidator::validate_public_id(&public_id).is_ok());
+        assert!(matches_pattern(&public_id, pattern));
+
+        // Verify consistency
+        assert!(AddressValidator::verify_seed_address_consistency(
+            &seed,
+            &public_id
+        ));
+
+        println!("Test passed: Found {} in {} attempts", 
+                 public_id, result.attempts);
+    } else {
+        println!("Test failed: {:?}", result.error);
+    }
+}
+
+// Print usage examples
+fn print_usage_examples() {
+    println!(
+        r#"
+Qubic Vanity Address Generator - Usage Examples
+===============================================
+
+1. Basic Usage:
+   let result = generate_vanity_address("HELLO*", None, None);
+   
+2. With limited attempts:
+   let result = generate_vanity_address("TEST*", Some(100000), None);
+   
+3. Multi-threaded generation:
+   let result = generate_vanity_address("CRYPTO*", None, Some(8));
+   
+4. Download Qubic Helper:
+   download_qubic_helper();
+   
+5. Run validation tests:
+   run_validation_tests();
+   
+6. Test full generation:
+   test_full_vanity_generation();
+
+Pattern Formats:
+- "HELLO*" : Matches addresses starting with "HELLO"
+- "TEST"   : Exact match for prefix "TEST"
+- "A*"     : Matches addresses starting with "A" (fast to find)
+
+Note: Longer patterns take exponentially longer to find!
+"#
+    );
+}
+
 // Interactive mode
 fn interactive_mode() {
-    println!("Ultra-Fast Qubic Vanity Address Generator - Interactive Mode");
-    println!("{}", "=".repeat(60));
+    println!("Qubic Vanity Address Generator - Interactive Mode");
+    println!("{}", "=".repeat(50));  // Fixed string multiplication
 
     loop {
-        println!("\n{}", "=".repeat(60));
+        println!("\n{}", "=".repeat(50));  // Fixed string multiplication
         println!("Choose an option:");
         println!("1. Generate vanity address");
         println!("2. Run tests");
-        println!("3. Performance benchmark");
-        println!("4. Exit");
-        print!("Enter choice (1-4): ");
+        println!("3. Exit");
+        print!("Enter choice (1-3): ");
         io::stdout().flush().unwrap();
 
         let mut choice = String::new();
@@ -599,51 +642,42 @@ fn interactive_mode() {
                         max_attempts_str.trim().parse().ok()
                     };
                     
-                    print!("Enter number of helpers (press Enter for default 8): ");
+                    print!("Enter number of threads (press Enter for default): ");
                     io::stdout().flush().unwrap();
                     
-                    let mut num_helpers_str = String::new();
-                    io::stdin().read_line(&mut num_helpers_str).unwrap();
-                    let num_helpers = if num_helpers_str.trim().is_empty() {
-                        DEFAULT_HELPERS
+                    let mut num_threads_str = String::new();
+                    io::stdin().read_line(&mut num_threads_str).unwrap();
+                    let num_threads = if num_threads_str.trim().is_empty() {
+                        None
                     } else {
-                        num_helpers_str.trim().parse().unwrap_or(DEFAULT_HELPERS)
+                        num_threads_str.trim().parse().ok()
                     };
                     
-                    let result = generate_vanity_address_ultra_fast(&pattern, max_attempts, num_helpers);
+                    let result = generate_vanity_address(&pattern, max_attempts, num_threads);
                     
                     if result.status == "success" {
-                        println!("\n🎉 SUCCESS! Found vanity address:");
+                        println!("\nSuccess! Found vanity address:");
                         println!("Public ID: {}", result.public_id.unwrap());
                         println!("Seed: {}", result.seed.unwrap());
                         println!("Public Key: {}", result.public_key_b64.unwrap());
                         println!("Private Key: {}", result.private_key_b64.unwrap());
                         println!("Attempts: {}", result.attempts);
-                        println!("Speed: {:.0} hashes/second", result.hashes_per_second);
                     } else {
-                        println!("\n❌ Failed: {:?}", result.error);
-                        println!("Speed: {:.0} hashes/second", result.hashes_per_second);
+                        println!("\nFailed: {:?}", result.error);
                     }
                 } else {
                     println!("Invalid pattern. Please use uppercase letters A-Z only, optionally ending with *");
                 }
             },
             "2" => {
-                run_validation_tests();
+                test_full_vanity_generation();
             },
             "3" => {
-                println!("Running performance benchmark...");
-                let result = generate_vanity_address_ultra_fast("A*", Some(10000), 8);
-                println!("Benchmark completed:");
-                println!("Attempts: {}", result.attempts);
-                println!("Speed: {:.0} hashes/second", result.hashes_per_second);
-            },
-            "4" => {
                 println!("Goodbye!");
                 break;
             },
             _ => {
-                println!("Invalid choice. Please enter 1, 2, 3, or 4.");
+                println!("Invalid choice. Please enter 1, 2, or 3.");
             }
         }
     }
@@ -651,9 +685,10 @@ fn interactive_mode() {
 
 // Main function
 fn main() {
-    println!("🚀 Ultra-Fast Qubic Vanity Address Generator");
-    println!("{}", "=".repeat(60));
+    println!("Qubic Vanity Address Generator");
+    println!("{}", "=".repeat(40));  // Fixed string multiplication
 
+    // Check if Qubic Helper binary exists
     if !Path::new(QUBIC_HELPER_PATH).exists() {
         println!("Qubic Helper Utilities binary not found.");
         print!("Would you like to download it now? (y/n): ");
@@ -666,10 +701,10 @@ fn main() {
         if download_choice == "y" {
             match download_qubic_helper() {
                 Ok(_) => {
-                    println!("✅ Download successful! You can now generate vanity addresses.");
+                    println!("Download successful! You can now generate vanity addresses.");
                 },
                 Err(e) => {
-                    println!("❌ Download failed: {}", e);
+                    println!("Download failed: {}", e);
                     println!("Please download manually from:");
                     println!("{}", QUBIC_HELPER_DOWNLOAD_URL);
                     println!("And save it as 'qubic-helper-linux' in the current directory.");
@@ -682,17 +717,24 @@ fn main() {
         }
     }
 
+    // Run validation tests if binary is available
     if Path::new(QUBIC_HELPER_PATH).exists() {
         println!("\nRunning validation tests...");
         run_validation_tests();
 
+        // Show usage examples
+        print_usage_examples();
+
+        // Check if we should run in interactive mode
         let args: Vec<String> = env::args().collect();
         if args.len() == 1 {
+            // No command line arguments, run interactive mode
             interactive_mode();
         } else {
+            // Parse command line arguments
             let mut pattern = None;
             let mut max_attempts = None;
-            let mut num_helpers = Some(DEFAULT_HELPERS);
+            let mut num_threads = None;
 
             let mut i = 1;
             while i < args.len() {
@@ -720,17 +762,17 @@ fn main() {
                             return;
                         }
                     },
-                    "--helpers" | "-H" => {
+                    "--threads" | "-t" => {
                         if i + 1 < args.len() {
-                            if let Ok(helpers) = args[i + 1].parse() {
-                                num_helpers = Some(helpers);
+                            if let Ok(threads) = args[i + 1].parse() {
+                                num_threads = Some(threads);
                                 i += 2;
                             } else {
-                                eprintln!("Error: --helpers requires a number");
+                                eprintln!("Error: --threads requires a number");
                                 return;
                             }
                         } else {
-                            eprintln!("Error: --helpers requires a value");
+                            eprintln!("Error: --threads requires a value");
                             return;
                         }
                     },
@@ -739,12 +781,8 @@ fn main() {
                         println!("Options:");
                         println!("  -p, --pattern PATTERN     Vanity pattern to search for");
                         println!("  -m, --max-attempts NUM    Maximum number of attempts");
-                        println!("  -H, --helpers NUM         Number of helper instances (default: 8)");
+                        println!("  -t, --threads NUM         Number of threads to use");
                         println!("  -h, --help               Print this help");
-                        println!("\nExamples:");
-                        println!("  {} -p 'HELLO*'                    # Basic usage", args[0]);
-                        println!("  {} -p 'CRYPTO*' -H 16             # 16 helpers", args[0]);
-                        println!("  {} -p 'VANITY*' -m 1000000 -H 32  # Max performance", args[0]);
                         return;
                     },
                     _ => {
@@ -755,22 +793,17 @@ fn main() {
             }
 
             if let Some(pattern) = pattern {
-                let start_time = Instant::now();
-                let result = generate_vanity_address_ultra_fast(&pattern, max_attempts, num_helpers.unwrap_or(DEFAULT_HELPERS));
-                let duration = start_time.elapsed();
+                let result = generate_vanity_address(&pattern, max_attempts, num_threads);
                 
                 if result.status == "success" {
-                    println!("🎉 SUCCESS! Found vanity address:");
+                    println!("Success! Found vanity address:");
                     println!("Public ID: {}", result.public_id.unwrap());
                     println!("Seed: {}", result.seed.unwrap());
                     println!("Public Key: {}", result.public_key_b64.unwrap());
                     println!("Private Key: {}", result.private_key_b64.unwrap());
                     println!("Attempts: {}", result.attempts);
-                    println!("Time: {:.2}s", duration.as_secs_f64());
-                    println!("Speed: {:.0} hashes/second", result.hashes_per_second);
                 } else {
-                    println!("❌ Failed: {:?}", result.error);
-                    println!("Speed: {:.0} hashes/second", result.hashes_per_second);
+                    println!("Failed: {:?}", result.error);
                 }
             }
         }
