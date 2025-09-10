@@ -224,14 +224,14 @@ mod qubic_crypto {
         
         // Spawn a thread to do the computation
         let handle = thread::spawn(move || {
-            let subseed = Self::seed_to_subseed(&seed_clone);
+            let subseed = qubic_crypto::seed_to_subseed(&seed_clone);
             match subseed {
                 Ok(subseed) => {
-                    let private_key = Self::subseed_to_private_key(&subseed);
-                    let public_key = Self::private_key_to_public_key(&private_key);
+                    let private_key = qubic_crypto::subseed_to_private_key(&subseed);
+                    let public_key = qubic_crypto::private_key_to_public_key(&private_key);
                     match public_key {
                         Ok(public_key) => {
-                            let identity = Self::public_key_to_identity(&public_key);
+                            let identity = qubic_crypto::public_key_to_identity(&public_key);
                             match identity {
                                 Ok(identity) => {
                                     sender.send(Ok((identity, private_key, public_key))).unwrap();
@@ -269,7 +269,7 @@ mod qubic_crypto {
     /// EXACT: Complete seed to identity conversion
     pub fn seed_to_identity(seed: &str) -> Result<(String, [u8; super::PRIVATE_KEY_SIZE], [u8; super::PUBLIC_KEY_SIZE]), String> {
         // Use a timeout to prevent hanging
-        Self::seed_to_identity_with_timeout(seed, 5000) // 5 second timeout
+        qubic_crypto::seed_to_identity_with_timeout(seed, 5000) // 5 second timeout
     }
 }
 
