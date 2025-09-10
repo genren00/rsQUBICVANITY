@@ -7,7 +7,7 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Instant;
+use std::time::{Instant, Duration};
 use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
 use serde::{Deserialize, Serialize};
@@ -109,6 +109,8 @@ impl ProgressTracker {
 // EXACT Qubic Cryptography Module - Based on KeyUtils.cpp
 mod qubic_crypto {
     use super::*;
+    use std::sync::mpsc;
+    use std::thread;
 
     /// EXACT: Convert seed to bytes (a-z -> 0-25) as in KeyUtils.cpp
     fn seed_to_bytes_exact(seed: &str) -> Result<Vec<u8>, String> {
@@ -215,14 +217,59 @@ mod qubic_crypto {
         Ok(identity_str)
     }
 
+    /// EXACT: Complete seed to identity conversion with timeout
+    pub fn seed_to_identity_with_timeout(seed: &str, timeout_ms: u64) -> Result<(String, [u8; super::PRIVATE_KEY_SIZE], [u8; super::PUBLIC_KEY_SIZE]), String> {
+        let (sender, receiver) = mpsc::channel();
+        let seed_clone = seed.to_string();
+        
+        // Spawn a thread to do the computation
+        let handle = thread::spawn(move || {
+            let subseed = Self::seed_to_subseed(&seed_clone);
+            match subseed {
+                Ok(subseed) => {
+                    let private_key = Self::subseed_to_private_key(&subseed);
+                    let public_key = Self::private_key_to_public_key(&private_key);
+                    match public_key {
+                        Ok(public_key) => {
+                            let identity = Self::public_key_to_identity(&public_key);
+                            match identity {
+                                Ok(identity) => {
+                                    sender.send(Ok((identity, private_key, public_key))).unwrap();
+                                },
+                                Err(e) => {
+                                    sender.send(Err(e)).unwrap();
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            sender.send(Err(e)).unwrap();
+                        }
+                    }
+                },
+                Err(e) => {
+                    sender.send(Err(e)).unwrap();
+                }
+            }
+        });
+        
+        // Wait for the result with a timeout
+        let result = receiver.recv_timeout(Duration::from_millis(timeout_ms));
+        
+        match result {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(e)) => Err(e),
+            Err(_) => {
+                // Timeout occurred
+                println!("⚠️  Cryptographic operation timed out after {}ms", timeout_ms);
+                Err("Cryptographic operation timed out".to_string())
+            }
+        }
+    }
+
     /// EXACT: Complete seed to identity conversion
     pub fn seed_to_identity(seed: &str) -> Result<(String, [u8; super::PRIVATE_KEY_SIZE], [u8; super::PUBLIC_KEY_SIZE]), String> {
-        let subseed = seed_to_subseed(seed)?;
-        let private_key = subseed_to_private_key(&subseed);
-        let public_key = private_key_to_public_key(&private_key)?;
-        let identity = public_key_to_identity(&public_key)?;
-        
-        Ok((identity, private_key, public_key))
+        // Use a timeout to prevent hanging
+        Self::seed_to_identity_with_timeout(seed, 5000) // 5 second timeout
     }
 }
 
@@ -615,7 +662,7 @@ fn generate_vanity_address(pattern: &str, max_attempts: Option<u64>, num_threads
     }
 }
 
-// Run validation tests with EXACT test vectors - FIXED: Non-fatal
+// Run validation tests with EXACT test vectors - FIXED: Non-fatal with timeout
 fn run_validation_tests() -> bool {
     println!("Running validation tests with EXACT algorithm...");
     let mut all_passed = true;
@@ -660,9 +707,11 @@ fn run_validation_tests() -> bool {
         Err(_) => println!("✅ Invalid public ID validation test PASSED"),
     }
 
-    // Test seed-address consistency (using EXACT native implementation)
+    // Test seed-address consistency (using EXACT native implementation) - WITH TIMEOUT
     println!("Testing EXACT seed-to-address conversion...");
-    match qubic_crypto::seed_to_identity(valid_seed) {
+    println!("   (This test has a 5-second timeout to prevent hanging)");
+    
+    match qubic_crypto::seed_to_identity_with_timeout(valid_seed, 5000) {
         Ok((public_id, _, _)) => {
             println!("Generated ID: {}", public_id);
             println!("Expected ID:  {}", valid_id);
@@ -677,6 +726,7 @@ fn run_validation_tests() -> bool {
         },
         Err(e) => {
             println!("❌ EXACT implementation test ERROR: {}", e);
+            println!("   This test will be skipped to prevent hanging...");
             all_passed = false;
         }
     }
@@ -900,7 +950,7 @@ fn interactive_mode() {
                             }
                         }
                     } else {
-                        println!("\n❌ Failed: {:?}", result.error);
+                        println!("❌ Failed: {:?}", result.error);
                     }
                 } else {
                     println!("Invalid pattern. Please use uppercase letters A-Z only, optionally ending with *");
@@ -927,7 +977,7 @@ fn main() {
     println!("Native Rust implementation - 1000x+ performance improvement");
     println!("{}", "=".repeat(80));
 
-    // Run validation tests (non-fatal)
+    // Run validation tests (non-fatal with timeout)
     println!("\n🔬 Running validation tests with EXACT algorithm...");
     let tests_passed = run_validation_tests();
     
