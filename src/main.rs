@@ -20,7 +20,6 @@ use std::collections::VecDeque;
 const SEED_LENGTH: usize = 55;
 const PUBLIC_ID_LENGTH: usize = 60;
 const QUBIC_HELPER_PATH: &str = "./qubic-helper-linux";
-const QUBIC_HELPER_VERSION: &str = "3.0.5";
 const QUBIC_HELPER_DOWNLOAD_URL: &str = "https://github.com/Qubic-Hub/qubic-helper-utils/releases/download/3.0.5/qubic-helper-linux-x64-3_0_5";
 const DEFAULT_HELPERS: usize = 8;
 const DEFAULT_BATCH_SIZE: usize = 50;
@@ -36,13 +35,7 @@ struct QubicResponse {
     #[serde(rename = "privateKeyB64")]
     private_key_b64: Option<String>,
     status: String,
-    error: Option<String>,
-}
-
-// Struct for batch request
-#[derive(Debug, Serialize)]
-struct BatchRequest {
-    seeds: Vec<String>,
+    error: Option<String>, // Used for error handling in worker threads
 }
 
 // Struct for batch response
@@ -176,51 +169,6 @@ impl AddressValidator {
         }
         
         Ok(())
-    }
-}
-
-// Execute Qubic Helper command (single seed)
-fn execute_qubic_command(command: &str) -> Result<QubicResponse, String> {
-    if !Path::new(QUBIC_HELPER_PATH).exists() {
-        return Err(format!("Qubic Helper binary not found at {}", QUBIC_HELPER_PATH));
-    }
-
-    let parts: Vec<&str> = command.split_whitespace().collect();
-    if parts.len() < 2 {
-        return Err("Invalid command format".to_string());
-    }
-
-    let output = Command::new(parts[0])
-        .args(&parts[1..])
-        .output();
-
-    match output {
-        Ok(output) => {
-            if !output.status.success() {
-                return Err(format!("Command failed with exit code: {}", output.status));
-            }
-
-            let response_str = String::from_utf8_lossy(&output.stdout);
-            let response: Value = match serde_json::from_str(&response_str) {
-                Ok(v) => v,
-                Err(e) => return Err(format!("Invalid JSON response: {}", e)),
-            };
-
-            let status = response["status"].as_str().unwrap_or("error").to_string();
-            let public_id = response["publicId"].as_str().map(|s| s.to_string());
-            let public_key_b64 = response["publicKeyB64"].as_str().map(|s| s.to_string());
-            let private_key_b64 = response["privateKeyB64"].as_str().map(|s| s.to_string());
-            let error = response["error"].as_str().map(|s| s.to_string());
-
-            Ok(QubicResponse {
-                public_id,
-                public_key_b64,
-                private_key_b64,
-                status,
-                error,
-            })
-        },
-        Err(e) => Err(format!("Failed to execute command: {}", e)),
     }
 }
 
@@ -451,7 +399,7 @@ fn generate_vanity_address_ultra_fast(
     println!("Starting ultra-fast vanity generation for pattern: {}", pattern);
     println!("Using {} helper instances with batch size {}", num_helpers, DEFAULT_BATCH_SIZE);
 
-    let start_time = Instant::now();
+    let _start_time = Instant::now(); // Fixed: prefixed with underscore
     let mut progress_tracker = ProgressTracker::new();
     let mut attempts = 0;
 
@@ -541,7 +489,7 @@ fn generate_vanity_address_ultra_fast(
                         // Shutdown all threads
                         *shutdown_flag.lock().unwrap() = true;
                         
-                        let (total_attempts, elapsed, hashes_per_second) = progress_tracker.get_stats();
+                        let (total_attempts, _elapsed, hashes_per_second) = progress_tracker.get_stats(); // Fixed: prefixed with underscore
                         
                         return VanityResult {
                             status: "success".to_string(),
@@ -574,7 +522,7 @@ fn generate_vanity_address_ultra_fast(
     }
     let _ = seed_generator_handle.join();
 
-    let (total_attempts, elapsed, hashes_per_second) = progress_tracker.get_stats();
+    let (total_attempts, _elapsed, hashes_per_second) = progress_tracker.get_stats(); // Fixed: prefixed with underscore
 
     VanityResult {
         status: "error".to_string(),
