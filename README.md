@@ -8,7 +8,7 @@ A high-performance Rust implementation for generating custom Qubic addresses wit
 
 ## Features
 
-- **High Performance**: Rust implementation provides 10-50x faster generation than Python
+- **low performance**: Rust implementation provides 10-50x faster generation than Python
 - **Multi-threaded**: Utilizes all available CPU cores for parallel processing
 - **Secure**: Cryptographically secure random seed generation
 - **User-friendly**: Both command-line and interactive modes
@@ -139,7 +139,7 @@ The generator supports two pattern formats:
    - Example: `"HELLO"` matches addresses starting with "HELLO"
 
 #### Pattern Complexity and Expected Time
-
+all bullshit, 6/s wtf????
 | Pattern Length | Possible Combinations | Expected Time (4 threads) |
 |----------------|----------------------|--------------------------|
 | 1 character    | 26                   | < 1 second               |
@@ -203,7 +203,7 @@ cargo build --release --target=x86_64-pc-windows-gnu
 ### Benchmarks
 
 The Rust implementation provides significant performance improvements over the Python version:
-
+loooool bs 6/s
 | Operation | Python (1 thread) | Rust (1 thread) | Rust (8 threads) | Speedup |
 |-----------|------------------|-----------------|------------------|---------|
 | 3-char pattern | 5 seconds | 0.8 seconds | 0.2 seconds | 25x |
@@ -379,7 +379,7 @@ cargo test
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
-
+xno.link/forsenlover69
 - [Qubic](https://qubic.org/) for the blockchain technology
 - [Qubic-Hub](https://github.com/Qubic-Hub) for the Qubic Helper Utilities
 - The Rust community for the excellent language and tooling
