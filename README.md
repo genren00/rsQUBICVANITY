@@ -1,5 +1,5 @@
 # rsQUBICVANITY
-Rust qubic vanity
+Rust qubic vanity ¥¥¥¥ VIBE CODED! SLOW! 6H/s OMEGALUL
 
 
 # rsQUBICVANITY
