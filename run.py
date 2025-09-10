@@ -33,9 +33,16 @@ QUBIC_HELPER_DOWNLOAD_URL = f"https://github.com/Qubic-Hub/qubic-helper-utils/re
 class QubicVanityGenerator:
     """Main class for generating vanity Qubic addresses"""
     
-    def __init__(self, num_threads: int = None):
-        """Initialize the generator with optional thread count"""
-        self.num_threads = num_threads or multiprocessing.cpu_count()
+    def __init__(self, num_threads: int):
+        """
+        Initialize the generator with required number of threads.
+        
+        Args:
+            num_threads: Number of threads to use for generation (must be at least 1)
+        """
+        if num_threads < 1:
+            raise ValueError("Number of threads must be at least 1")
+        self.num_threads = num_threads
         self.progress_tracker = ProgressTracker()
     
     def generate_vanity_address(self, pattern: str, max_attempts: int = None) -> Dict:
@@ -56,7 +63,7 @@ class QubicVanityGenerator:
         print(f"Starting vanity generation for pattern: {pattern}")
         print(f"Using {self.num_threads} threads for generation")
         
-        # Try multi-threaded generation first
+        # Try multi-threaded generation
         result = self._generate_multithreaded(pattern, max_attempts)
         
         if result["status"] == "success":
@@ -458,15 +465,18 @@ def generate_vanity_address(pattern: str, max_attempts: int = None, num_threads:
     Args:
         pattern: Desired prefix or pattern for the address
         max_attempts: Maximum number of attempts (None for unlimited)
-        num_threads: Number of threads to use (default: CPU count)
+        num_threads: Number of threads to use (must be provided)
     
     Returns:
         Dictionary containing the matching address and seed
     """
+    if num_threads is None:
+        raise ValueError("Number of threads must be specified")
+    
     generator = QubicVanityGenerator(num_threads)
     return generator.generate_vanity_address(pattern, max_attempts)
 
-def batch_generate_vanity_addresses(pattern: str, count: int, max_attempts_per_address: int = None) -> List[Dict]:
+def batch_generate_vanity_addresses(pattern: str, count: int, max_attempts_per_address: int = None, num_threads: int = None) -> List[Dict]:
     """
     Generate multiple vanity addresses with the same pattern.
     
@@ -474,16 +484,20 @@ def batch_generate_vanity_addresses(pattern: str, count: int, max_attempts_per_a
         pattern: Desired vanity pattern
         count: Number of addresses to generate
         max_attempts_per_address: Maximum attempts per address
+        num_threads: Number of threads to use (must be provided)
         
     Returns:
         List of result dictionaries
     """
+    if num_threads is None:
+        raise ValueError("Number of threads must be specified")
+    
     results = []
     
     for i in range(count):
         print(f"Generating address {i+1}/{count}...")
         
-        result = generate_vanity_address(pattern, max_attempts_per_address)
+        result = generate_vanity_address(pattern, max_attempts_per_address, num_threads)
         results.append(result)
         
         if result["status"] == "success":
@@ -533,7 +547,8 @@ def test_full_vanity_generation():
         print("Qubic Helper binary not found. Skipping full generation test.")
         return
     
-    result = generate_vanity_address(pattern, max_attempts=10000)
+    # Test with 2 threads
+    result = generate_vanity_address(pattern, max_attempts=10000, num_threads=2)
     
     if result["status"] == "success":
         # Verify the result
@@ -605,18 +620,19 @@ Qubic Vanity Address Generator - Usage Examples
 ===============================================
 
 1. Basic Usage:
-   generator = QubicVanityGenerator()
+   generator = QubicVanityGenerator(num_threads=4)
    result = generator.generate_vanity_address("HELLO*")
    
 2. With limited attempts:
+   generator = QubicVanityGenerator(num_threads=8)
    result = generator.generate_vanity_address("TEST*", max_attempts=100000)
    
 3. Multi-threaded generation:
-   generator = QubicVanityGenerator(num_threads=8)
+   generator = QubicVanityGenerator(num_threads=16)
    result = generator.generate_vanity_address("CRYPTO*")
    
 4. Batch generation:
-   results = batch_generate_vanity_addresses("VANITY*", count=3)
+   results = batch_generate_vanity_addresses("VANITY*", count=3, num_threads=4)
    
 5. Download Qubic Helper:
    download_qubic_helper()
@@ -632,8 +648,23 @@ Pattern Formats:
 - "TEST"   : Exact match for prefix "TEST"
 - "A*"     : Matches addresses starting with "A" (fast to find)
 
-Note: Longer patterns take exponentially longer to find!
+Note: You must specify the number of threads when creating the generator!
 """)
+
+def get_num_threads_from_user() -> int:
+    """Get the number of threads from user input with validation."""
+    while True:
+        try:
+            num_threads = input("Enter number of threads to use (1-64 recommended): ").strip()
+            num_threads = int(num_threads)
+            if num_threads < 1:
+                print("Number of threads must be at least 1. Please try again.")
+            elif num_threads > 64:
+                print("Using more than 64 threads may cause performance issues. Please try again.")
+            else:
+                return num_threads
+        except ValueError:
+            print("Please enter a valid number. Please try again.")
 
 # Main Execution
 if __name__ == "__main__":
@@ -680,7 +711,10 @@ if __name__ == "__main__":
                     max_attempts = input("Enter maximum attempts (press Enter for unlimited): ").strip()
                     max_attempts = int(max_attempts) if max_attempts.isdigit() else None
                     
-                    generator = QubicVanityGenerator()
+                    # Get number of threads from user
+                    num_threads = get_num_threads_from_user()
+                    
+                    generator = QubicVanityGenerator(num_threads)
                     result = generator.generate_vanity_address(pattern, max_attempts)
                     
                     if result["status"] == "success":
