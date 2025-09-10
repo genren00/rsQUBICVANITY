@@ -36,6 +36,7 @@ struct QubicResponse {
     #[serde(rename = "privateKeyB64")]
     private_key_b64: Option<String>,
     status: String,
+    #[allow(dead_code)]
     error: Option<String>,
 }
 
@@ -94,6 +95,7 @@ impl ProgressTracker {
                  self.attempts, elapsed, attempts_per_second);
     }
 
+    #[allow(dead_code)]
     fn get_stats(&self) -> (u64, f64, f64) {
         let elapsed = self.start_time.elapsed().as_secs_f64();
         let attempts_per_second = if elapsed > 0.0 {
@@ -217,45 +219,27 @@ mod qubic_crypto {
         Ok(identity_str)
     }
 
-    /// EXACT: Complete seed to identity conversion with timeout
+    /// EXACT: Complete seed to identity conversion with timeout - FIXED
     pub fn seed_to_identity_with_timeout(seed: &str, timeout_ms: u64) -> Result<(String, [u8; super::PRIVATE_KEY_SIZE], [u8; super::PUBLIC_KEY_SIZE]), String> {
         let (sender, receiver) = mpsc::channel();
         let seed_clone = seed.to_string();
         
         // Spawn a thread to do the computation
-        let handle = thread::spawn(move || {
-            let subseed = qubic_crypto::seed_to_subseed(&seed_clone);
-            match subseed {
-                Ok(subseed) => {
-                    let private_key = qubic_crypto::subseed_to_private_key(&subseed);
-                    let public_key = qubic_crypto::private_key_to_public_key(&private_key);
-                    match public_key {
-                        Ok(public_key) => {
-                            let identity = qubic_crypto::public_key_to_identity(&public_key);
-                            match identity {
-                                Ok(identity) => {
-                                    sender.send(Ok((identity, private_key, public_key))).unwrap();
-                                },
-                                Err(e) => {
-                                    sender.send(Err(e)).unwrap();
-                                }
-                            }
-                        },
-                        Err(e) => {
-                            sender.send(Err(e)).unwrap();
-                        }
-                    }
-                },
-                Err(e) => {
-                    sender.send(Err(e)).unwrap();
-                }
-            }
+        let _handle = thread::spawn(move || {
+            let result = (|| {
+                let subseed = qubic_crypto::seed_to_subseed(&seed_clone)?;
+                let private_key = qubic_crypto::subseed_to_private_key(&subseed);
+                let public_key = qubic_crypto::private_key_to_public_key(&private_key)?;
+                let identity = qubic_crypto::public_key_to_identity(&public_key)?;
+                Ok((identity, private_key, public_key))
+            })();
+            
+            // Send the result back
+            let _ = sender.send(result);
         });
         
         // Wait for the result with a timeout
-        let result = receiver.recv_timeout(Duration::from_millis(timeout_ms));
-        
-        match result {
+        match receiver.recv_timeout(Duration::from_millis(timeout_ms)) {
             Ok(Ok(result)) => Ok(result),
             Ok(Err(e)) => Err(e),
             Err(_) => {
@@ -286,6 +270,7 @@ impl SeedGenerator {
             .collect()
     }
 
+    #[allow(dead_code)]
     fn generate_from_entropy(entropy: &[u8]) -> String {
         use rand::SeedableRng;
         use rand::rngs::StdRng;
@@ -330,6 +315,7 @@ impl AddressValidator {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn verify_seed_address_consistency(seed: &str, expected_public_id: &str) -> bool {
         match qubic_crypto::seed_to_identity(seed) {
             Ok((public_id, _, _)) => public_id == expected_public_id,
@@ -384,6 +370,7 @@ fn execute_qubic_command_native(command: &str) -> Result<QubicResponse, String> 
 }
 
 // Legacy command execution (fallback)
+#[allow(dead_code)]
 fn execute_qubic_command(command: &str) -> Result<QubicResponse, String> {
     // Try native implementation first
     if command.starts_with("native") {
